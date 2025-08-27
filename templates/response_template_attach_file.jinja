@@ -1,0 +1,7 @@
+{% if success %}
+✅ File attach successfully:
+- Incident Number: {{ incident_number }}
+{% else %}
+❌ Failed to update incident:
+- Error: {{ error_message }}
+{% endif %}
