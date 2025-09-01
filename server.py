@@ -11,10 +11,10 @@ from schemas import ResponseMessageModel, OutputModel
 
 params = {
     "grant_type": "password",
-    "client_id": "3MVG9nSH73I5aFNhduUJOJwAQ5xvrbrj9bo4elwj4u8n4mqORwcU9xdRoQkoYegzIE1USfFAKFv43oX.0irxH", # Consumer Key
-    "client_secret": "84E04DA367889884DC4BB33179E99AF7ADDE32CC30C8AD45C548720C2B0D0484", # Consumer Secret
-    "username": "userdevelopment3-5f5n@force.com", # The email you use to login
-    "password": "Merlin2025SNBbgtUlZe37VluuSTgT8uBEr" # Concat your password and your security token
+    "client_id": "3MVG9nSH73I5aFNhduUJOJwAQ5xvrbrj9bo4elwj4u8n4mqORwcU9xdRoQkoYegzIE1USfFAKFv43oX.0irxH",  # Consumer Key
+    "client_secret": "84E04DA367889884DC4BB33179E99AF7ADDE32CC30C8AD45C548720C2B0D0484",  # Consumer Secret
+    "username": "userdevelopment3-5f5n@force.com",  # The email you use to login
+    "password": "Merlin2025SNBbgtUlZe37VluuSTgT8uBEr"  # Concat your password and your security token
 }
 
 r = requests.post("https://login.salesforce.com/services/oauth2/token", params=params)
@@ -39,9 +39,14 @@ async def attach_file(request: Request) -> OutputModel:
     Returns:
         OutputModel: The result of the file attachment operation.
     """
+    data = await request.json()
+ 
+    incidente = data.get("incidente")
+    file_url = data.get("url_file")
+ 
+ 
 
     # Variable con el número de incidente a buscar
-    incidente = "00001003"  # Ejemplo de número de CaseNumber
 
     # Construimos la query filtrando directamente por el número de incidente
     soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
@@ -71,19 +76,31 @@ async def attach_file(request: Request) -> OutputModel:
             case_id = encontrado.get("Id")
             print(f"Subiendo archivo al Case con ID: {case_id}")
     
-            # Ruta del archivo a subir
-            file_path = "C:\\\\proyectos\\\\AWS.pdf"
-    
-            # Leer y codificar el archivo en Base64
-            with open(file_path, "rb") as f:
-                file_data = f.read()
+
+
+            # Descargar el archivo desde la URL
+            file_response = requests.get(file_url)
+            if file_response.status_code == 200:
+                file_data = file_response.content
                 file_base64 = base64.b64encode(file_data).decode("utf-8")
-    
+                file_name = os.path.basename(file_url.split("?")[0])  # Nombre del archivo sin query params
+            else:
+                message_error = f"No se pudo descargar el archivo desde la URL. Código {file_response.status_code}"
+                print(message_error)
+                message = response_template.render(
+                    success=False,
+                    error_message=message_error
+                )
+                return OutputModel(
+                    invocationId=invocation_id,
+                    response=[ResponseMessageModel(message=message)]
+                )
+
             # 1. Subir el archivo como ContentVersion
             content_version_url = f"{instance_url}/services/data/v57.0/sobjects/ContentVersion"
             content_version_payload = {
-                "Title": os.path.basename(file_path),
-                "PathOnClient": os.path.basename(file_path),
+                "Title": file_name,
+                "PathOnClient": file_name,
                 "VersionData": file_base64
             }
     
@@ -143,13 +160,12 @@ async def attach_file(request: Request) -> OutputModel:
         print(message_error, response.status_code, response.text)
 
     message = response_template.render(
-    success=False,
-    error_message=message_error
+        success=False,
+        error_message=message_error
     )
     return OutputModel(
         invocationId=invocation_id,
         response=[ResponseMessageModel(message=message)]
     )
-
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000, log_level="info")
