@@ -8,6 +8,7 @@ from uuid import uuid4
 from jinja2 import Environment, FileSystemLoader
 from fastapi import FastAPI, Request
 from schemas import ResponseMessageModel, OutputModel
+import re
 
 params = {
     "grant_type": "password",
@@ -32,23 +33,32 @@ app = FastAPI()
 async def attach_file(request: Request) -> OutputModel:
     """
     Endpoint to attach a file to a Salesforce case.
-
-    Args:
-        request (Request): The request object containing the file and case information.
-
-    Returns:
-        OutputModel: The result of the file attachment operation.
     """
     data = await request.json()
  
     incidente = data.get("incidente")
     file_url = data.get("url_file")
- 
- 
+    
+    # Ajustar URL si es de Google Drive
+    if "drive.google.com" in file_url:
+        match = re.search(r'/d/([a-zA-Z0-9_-]+)', file_url)
+        if match:
+            file_id = match.group(1)
+            file_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-    # Variable con el número de incidente a buscar
-
-    # Construimos la query filtrando directamente por el número de incidente
+    # Ajustar URL si es de Dropbox
+    if "dropbox.com" in file_url:
+        file_url = file_url.replace("?dl=0", "?dl=1")
+        
+    # Ajustar URL si es de OneDrive / SharePoint
+    if "sharepoint.com" in file_url or "1drv.ms" in file_url:
+        if "download=1" not in file_url:
+            if "?" in file_url:
+                file_url += "&download=1"
+            else:
+                file_url += "?download=1"
+    
+ 
     soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
     query_url = f"{instance_url}/services/data/v57.0/query"
     params = {"q": soql}
@@ -72,18 +82,19 @@ async def attach_file(request: Request) -> OutputModel:
         if encontrado:
             print("Incidente encontrado:", encontrado)
     
-            # --- Adjuntar archivo al Case encontrado ---
             case_id = encontrado.get("Id")
             print(f"Subiendo archivo al Case con ID: {case_id}")
     
-
-
             # Descargar el archivo desde la URL
             file_response = requests.get(file_url)
             if file_response.status_code == 200:
                 file_data = file_response.content
                 file_base64 = base64.b64encode(file_data).decode("utf-8")
                 file_name = os.path.basename(file_url.split("?")[0])  # Nombre del archivo sin query params
+
+                # 🔹 Validación: si no tiene extensión, agregar .pdf
+                if "." not in file_name:
+                    file_name += ".pdf"
             else:
                 message_error = f"No se pudo descargar el archivo desde la URL. Código {file_response.status_code}"
                 print(message_error)
