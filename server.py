@@ -257,6 +257,55 @@ async def update_state(request: Request) -> OutputModel:
         invocationId=invocation_id,
         response=[ResponseMessageModel(message=message)]
     )
+
+@app.get("/salesforce/case/list")
+async def list_incidents(request: Request) -> OutputModel:
+    """
+    List incidents from SalesForce.
+
+    Args:
+        params: The parameters for listing incidents.
+
+    Returns:
+        A list of incidents.
+    """
+    data = await request.json()
+
+    # Variable con el status de incidente a buscar
+    status = data.get("status")
+
+    # Construimos la query filtrando directamente por el status de incidente
+    soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE Status = '{status}'"
     
+    query_url = f"{instance_url}/services/data/v57.0/query"
+    params = {"q": soql}
+    
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        response = requests.get(query_url, headers=headers, params=params)
+        response.raise_for_status()
+        
+        result_json = response.json()
+        incidents = result_json.get("records", [])
+        count = len(incidents)
+        invocation_id = str(uuid4())
+        response_template = template_env.get_template("response_template_incidents.jinja")
+        rendered_response = response_template.render(count=count, incidents=incidents) if count > 0 else "No se encontraron incidentes"
+
+        return OutputModel(
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=rendered_response)]
+        )
+    except requests.RequestException as e:
+        logger.error(f"Error al obtener incidentes: {e}")
+        return OutputModel(
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=f"Error al obtener incidentes para el estado: {status}")]
+        )
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000, log_level="info")

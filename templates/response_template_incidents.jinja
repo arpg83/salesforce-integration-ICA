@@ -1,0 +1,4 @@
+Found {{ count }} incidents(s):
+{% for incident in incidents %}
+  - {{ incident.CaseNumber }} {{ incident.Subject }} (Status: {{ incident.Status }})
+{% endfor %}
