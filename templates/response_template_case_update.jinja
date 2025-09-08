@@ -1,0 +1,8 @@
+{% if success %}
+✅ Incident updated successfully:
+- Incident ID: {{ incident_id }}
+- Incident Number: {{ incident_number }}
+{% else %}
+❌ Failed to update incident:
+- Error: {{ error_message }}
+{% endif %}
