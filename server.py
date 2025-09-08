@@ -178,5 +178,85 @@ async def attach_file(request: Request) -> OutputModel:
         invocationId=invocation_id,
         response=[ResponseMessageModel(message=message)]
     )
+
+@app.put("/salesforce/case/update")
+async def update_state(request: Request) -> OutputModel:
+    """
+    Endpoint to update a file to a Salesforce case.
+
+    Args:
+        request (Request): The request object containing the file and case information.
+
+    Returns:
+        OutputModel: The result of the file attachment operation.
+    """
+ 
+    data = await request.json()
+
+    # Variable con el número de incidente a buscar
+    incidente = data.get("incidente")
+    nuevo_estado = data.get("nuevo_estado")
+
+    # Construimos la query filtrando directamente por el número de incidente
+    soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
+    query_url = f"{instance_url}/services/data/v57.0/query"
+    params_find = {"q": soql}
+
+    headers = {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json"
+    }
+    
+    response = requests.get(query_url, headers=headers, params=params_find, timeout=30)
+    message_error = None
+    invocation_id = str(uuid4())
+    response_template = template_env.get_template("response_template_case_update.jinja")
+
+    if response.status_code == 200:
+        data = response.json()
+        if data.get("records"):
+            encontrado = data["records"][0]
+        else:
+            encontrado = None
+   
+        if encontrado:
+            print("Incidente encontrado:", encontrado)
+            case_id = encontrado.get("Id")
+
+            query_url_update = f"{instance_url}/services/data/v64.0/sobjects/Case/{case_id}"
+            params_update = {"Status": nuevo_estado}
+
+            response = requests.patch(query_url_update, headers=headers, json=params_update, timeout=30)
+            message_error = None
+            print("Response Status Code:", response.status_code)
+            if response.status_code in (200, 204):
+                rendered_response = response_template.render(
+                    success=True,
+                    incident_number=incidente
+                    )
+                return OutputModel(
+                    status="success",
+                    invocationId=invocation_id,
+                    response=[ResponseMessageModel(message=rendered_response)]
+                )
+            else:
+                message_error = "Error al actualizar estado"
+                print(message_error, response.text)
+        else:
+            message_error = f"No se encontró el incidente {incidente}"
+            print(message_error)
+    else:
+        message_error = "Error"
+        print(message_error, response.status_code, response.text)
+
+    message = response_template.render(
+    success=False,
+    error_message=message_error
+    )
+    return OutputModel(
+        invocationId=invocation_id,
+        response=[ResponseMessageModel(message=message)]
+    )
+    
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000, log_level="info")
