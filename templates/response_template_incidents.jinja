@@ -1,4 +1,4 @@
-Found {{ count }} incidents(s):
+Se encontraron {{ count }} incidentes(s):
 {% for incident in incidents %}
-  - {{ incident.CaseNumber }} {{ incident.Subject }} (Status: {{ incident.Status }})
+  {{ incident.CaseNumber }} - {{ incident.Subject }} (Status: {{ incident.Status }})
 {% endfor %}
