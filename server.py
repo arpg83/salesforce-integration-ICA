@@ -8,22 +8,30 @@ from uuid import uuid4
 from jinja2 import Environment, FileSystemLoader
 from fastapi import FastAPI, Request
 from schemas import ResponseMessageModel, OutputModel
+from dotenv import load_dotenv
 import re
 
+load_dotenv()
+
 params = {
-    "grant_type": "password",
-    "client_id": "3MVG9nSH73I5aFNhduUJOJwAQ5xvrbrj9bo4elwj4u8n4mqORwcU9xdRoQkoYegzIE1USfFAKFv43oX.0irxH",  # Consumer Key
-    "client_secret": "84E04DA367889884DC4BB33179E99AF7ADDE32CC30C8AD45C548720C2B0D0484",  # Consumer Secret
-    "username": "userdevelopment3-5f5n@force.com",  # The email you use to login
-    "password": "Merlin2025SNBbgtUlZe37VluuSTgT8uBEr"  # Concat your password and your security token
+    "grant_type": os.getenv("GRANT_TYPE"),
+    "client_id": os.getenv("CLIENT_ID"), # Consumer Key
+    "client_secret": os.getenv("CLIENT_SECRET"), # Consumer Secret
+    "username": os.getenv("USER_NAME"), # The email you use to login
+    "password": os.getenv("PASSWORD") # Concat your password and your security token
 }
 
 r = requests.post("https://login.salesforce.com/services/oauth2/token", params=params)
 # if you connect to a Sandbox, use test.salesforce.com instead
-access_token = r.json().get("access_token")
-instance_url = r.json().get("instance_url")
-print("Access Token: ", access_token)
-print("Instance URL: ", instance_url)
+sf_response_json = r.json()
+if "error" in sf_response_json:
+    print(sf_response_json.get("error"))
+    print(sf_response_json.get("error_description"))
+else:
+    access_token = r.json().get("access_token")
+    instance_url = r.json().get("instance_url")
+    print("Access Token: ", access_token)
+    print("Instance URL: ", instance_url)
 
 logger = logging.getLogger(__name__)
 template_env = Environment(loader=FileSystemLoader("templates"))
