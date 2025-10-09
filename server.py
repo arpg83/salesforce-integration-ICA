@@ -9,306 +9,190 @@ from jinja2 import Environment, FileSystemLoader
 from fastapi import FastAPI, Request
 from schemas import ResponseMessageModel, OutputModel
 from dotenv import load_dotenv
+from simple_salesforce import Salesforce
 import re
 
 load_dotenv()
 
-params = {
-    "grant_type": os.getenv("GRANT_TYPE"),
-    "client_id": os.getenv("CLIENT_ID"), # Consumer Key
-    "client_secret": os.getenv("CLIENT_SECRET"), # Consumer Secret
-    "username": os.getenv("USER_NAME"), # The email you use to login
-    "password": os.getenv("PASSWORD") # Concat your password and your security token
-}
+username = os.getenv("SALESFORCE_USER_NAME")
+password = os.getenv("SALESFORCE_PASSWORD")
+security_token = os.getenv("SALESFORCE_SECURITY_TOKEN")
+domain = os.getenv("SALESFORCE_DOMAIN")  # "login" o "test"
 
-r = requests.post("https://login.salesforce.com/services/oauth2/token", params=params)
-# if you connect to a Sandbox, use test.salesforce.com instead
-sf_response_json = r.json()
-if "error" in sf_response_json:
-    print(sf_response_json.get("error"))
-    print(sf_response_json.get("error_description"))
-else:
-    access_token = r.json().get("access_token")
-    instance_url = r.json().get("instance_url")
-    print("Access Token: ", access_token)
-    print("Instance URL: ", instance_url)
+try:
+    client = Salesforce(
+        username=username,
+        password=password,
+        security_token=security_token,
+        domain=domain
+    )
+    print("✅ Conectado a Salesforce correctamente")
+    print("Instancia:", client.sf_instance)
+except Exception as e:
+    print("❌ Error al conectar con Salesforce:", e)
 
 logger = logging.getLogger(__name__)
 template_env = Environment(loader=FileSystemLoader("templates"))
 app = FastAPI()
 
+
 @app.put("/salesforce/case/attach")
 async def attach_file(request: Request) -> OutputModel:
     """
-    Endpoint to attach a file to a Salesforce case.
+    Endpoint para adjuntar un archivo a un caso de Salesforce.
     """
     data = await request.json()
- 
     incidente = data.get("incidente")
     file_url = data.get("url_file")
-    
-    # Ajustar URL si es de Google Drive
+    invocation_id = str(uuid4())
+
+    # Ajustar URLs (Drive, Dropbox, OneDrive)
     if "drive.google.com" in file_url:
-        match = re.search(r'/d/([a-zA-Z0-9_-]+)', file_url)
+        match = re.search(r"/d/([a-zA-Z0-9_-]+)", file_url)
         if match:
             file_id = match.group(1)
             file_url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
-    # Ajustar URL si es de Dropbox
     if "dropbox.com" in file_url:
         file_url = file_url.replace("?dl=0", "?dl=1")
-        
-    # Ajustar URL si es de OneDrive / SharePoint
+
     if "sharepoint.com" in file_url or "1drv.ms" in file_url:
         if "download=1" not in file_url:
-            if "?" in file_url:
-                file_url += "&download=1"
-            else:
-                file_url += "?download=1"
-    
- 
-    soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
-    query_url = f"{instance_url}/services/data/v57.0/query"
-    params = {"q": soql}
-    
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    
-    response = requests.get(query_url, headers=headers, params=params)
-    message_error = None
-    invocation_id = str(uuid4())
+            file_url += "&download=1" if "?" in file_url else "?download=1"
+
     response_template = template_env.get_template("response_template_attach_file.jinja")
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("records"):
-            encontrado = data["records"][0]
-        else:
-            encontrado = None
-    
-        if encontrado:
-            print("Incidente encontrado:", encontrado)
-    
-            case_id = encontrado.get("Id")
-            print(f"Subiendo archivo al Case con ID: {case_id}")
-    
-            # Descargar el archivo desde la URL
-            file_response = requests.get(file_url)
-            if file_response.status_code == 200:
-                file_data = file_response.content
-                file_base64 = base64.b64encode(file_data).decode("utf-8")
-                file_name = os.path.basename(file_url.split("?")[0])  # Nombre del archivo sin query params
 
-                # 🔹 Validación: si no tiene extensión, agregar .pdf
-                if "." not in file_name:
-                    file_name += ".pdf"
-            else:
-                message_error = f"No se pudo descargar el archivo desde la URL. Código {file_response.status_code}"
-                print(message_error)
-                message = response_template.render(
-                    success=False,
-                    error_message=message_error
-                )
-                return OutputModel(
-                    invocationId=invocation_id,
-                    response=[ResponseMessageModel(message=message)]
-                )
+    try:
+        # Buscar el caso por número
+        soql = f"SELECT Id, CaseNumber FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
+        result = client.query(soql)
 
-            # 1. Subir el archivo como ContentVersion
-            content_version_url = f"{instance_url}/services/data/v57.0/sobjects/ContentVersion"
-            content_version_payload = {
-                "Title": file_name,
-                "PathOnClient": file_name,
-                "VersionData": file_base64
-            }
-    
-            cv_response = requests.post(
-                content_version_url,
-                headers=headers,
-                json=content_version_payload
-            )
-    
-            if cv_response.status_code in (200, 201):
-                content_version_id = cv_response.json().get("id")
-                print("ContentVersion creado:", content_version_id)
-    
-                # 2. Consultar el ContentDocumentId asociado
-                query_cd_url = f"{instance_url}/services/data/v57.0/query"
-                query = f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{content_version_id}'"
-                cd_response = requests.get(query_cd_url, headers=headers, params={"q": query})
-    
-                if cd_response.status_code == 200:
-                    content_document_id = cd_response.json()["records"][0]["ContentDocumentId"]
-    
-                    # 3. Crear el vínculo ContentDocumentLink con el Case
-                    cdl_url = f"{instance_url}/services/data/v57.0/sobjects/ContentDocumentLink"
-                    cdl_payload = {
-                        "ContentDocumentId": content_document_id,
-                        "LinkedEntityId": case_id,
-                        "ShareType": "V"  # V = View, C = Collaborate
-                    }
-    
-                    cdl_response = requests.post(cdl_url, headers=headers, json=cdl_payload)
-    
-                    if cdl_response.status_code in (200, 201):
-                        print("Archivo adjuntado correctamente al Case con nro. " + incidente)
-                        rendered_response = response_template.render(
-                            success=True,
-                            incident_number=incidente
-                        )
-                        return OutputModel(
-                            status="success",
-                            invocationId=invocation_id,
-                            response=[ResponseMessageModel(message=rendered_response)]
-                        )
-                    else:
-                        message_error = "Error al crear el ContentDocumentLink"
-                        print(message_error, cdl_response.text)
-                else:
-                    message_error = "Error al obtener ContentDocumentId"
-                    print(message_error, cd_response.text)
-            else:
-                message_error = "Error al crear ContentVersion"
-                print(message_error, cv_response.text)
-        else:
+        if not result["records"]:
             message_error = f"No se encontró el incidente {incidente}"
-            print(message_error)
-    else:
-        message_error = "Error"
-        print(message_error, response.status_code, response.text)
+            message = response_template.render(success=False, error_message=message_error)
+            return OutputModel(invocationId=invocation_id, response=[ResponseMessageModel(message=message)])
 
-    message = response_template.render(
-        success=False,
-        error_message=message_error
-    )
-    return OutputModel(
-        invocationId=invocation_id,
-        response=[ResponseMessageModel(message=message)]
-    )
+        case_id = result["records"][0]["Id"]
+        print(f"Case encontrado: {case_id}")
+
+        # Descargar archivo
+        file_response = requests.get(file_url)
+        if file_response.status_code != 200:
+            message_error = f"No se pudo descargar el archivo desde la URL (Código {file_response.status_code})"
+            message = response_template.render(success=False, error_message=message_error)
+            return OutputModel(invocationId=invocation_id, response=[ResponseMessageModel(message=message)])
+
+        file_data = file_response.content
+        file_base64 = base64.b64encode(file_data).decode("utf-8")
+        file_name = os.path.basename(file_url.split("?")[0]) or "archivo.pdf"
+
+        # Crear ContentVersion
+        content_version = client.ContentVersion.create({
+            "Title": file_name,
+            "PathOnClient": file_name,
+            "VersionData": file_base64
+        })
+        content_version_id = content_version.get("id")
+        print("ContentVersion creado:", content_version_id)
+
+        # Obtener ContentDocumentId
+        query_cd = f"SELECT ContentDocumentId FROM ContentVersion WHERE Id = '{content_version_id}'"
+        cd_result = client.query(query_cd)
+        content_document_id = cd_result["records"][0]["ContentDocumentId"]
+
+        # Crear vínculo ContentDocumentLink con el Case
+        client.ContentDocumentLink.create({
+            "ContentDocumentId": content_document_id,
+            "LinkedEntityId": case_id,
+            "ShareType": "V"
+        })
+
+        print("Archivo adjuntado correctamente al Case:", incidente)
+        rendered_response = response_template.render(success=True, incident_number=incidente)
+        return OutputModel(
+            status="success",
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=rendered_response)]
+        )
+
+    except Exception as e:
+        message_error = f"Error al adjuntar archivo: {e}"
+        print(message_error)
+        message = response_template.render(success=False, error_message=message_error)
+        return OutputModel(invocationId=invocation_id, response=[ResponseMessageModel(message=message)])
 
 @app.put("/salesforce/case/update")
 async def update_state(request: Request) -> OutputModel:
     """
-    Endpoint to update a file to a Salesforce case.
-
-    Args:
-        request (Request): The request object containing the file and case information.
-
-    Returns:
-        OutputModel: The result of the file attachment operation.
+    Endpoint para actualizar el estado de un caso de Salesforce.
     """
- 
     data = await request.json()
-
-    # Variable con el número de incidente a buscar
     incidente = data.get("incidente")
     nuevo_estado = data.get("nuevo_estado")
 
-    # Construimos la query filtrando directamente por el número de incidente
-    soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
-    query_url = f"{instance_url}/services/data/v57.0/query"
-    params_find = {"q": soql}
-
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    
-    response = requests.get(query_url, headers=headers, params=params_find, timeout=30)
-    message_error = None
     invocation_id = str(uuid4())
     response_template = template_env.get_template("response_template_case_update.jinja")
 
-    if response.status_code == 200:
-        data = response.json()
-        if data.get("records"):
-            encontrado = data["records"][0]
-        else:
-            encontrado = None
-   
-        if encontrado:
-            print("Incidente encontrado:", encontrado)
-            case_id = encontrado.get("Id")
+    try:
+        # Buscar el caso por número
+        soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE CaseNumber = '{incidente}' LIMIT 1"
+        result = client.query(soql)
 
-            query_url_update = f"{instance_url}/services/data/v64.0/sobjects/Case/{case_id}"
-            params_update = {"Status": nuevo_estado}
-
-            response = requests.patch(query_url_update, headers=headers, json=params_update, timeout=30)
-            message_error = None
-            print("Response Status Code:", response.status_code)
-            if response.status_code in (200, 204):
-                rendered_response = response_template.render(
-                    success=True,
-                    incident_number=incidente
-                    )
-                return OutputModel(
-                    status="success",
-                    invocationId=invocation_id,
-                    response=[ResponseMessageModel(message=rendered_response)]
-                )
-            else:
-                message_error = "Error al actualizar estado"
-                print(message_error, response.text)
-        else:
+        if not result["records"]:
             message_error = f"No se encontró el incidente {incidente}"
-            print(message_error)
-    else:
-        message_error = "Error"
-        print(message_error, response.status_code, response.text)
+            message = response_template.render(success=False, error_message=message_error)
+            return OutputModel(invocationId=invocation_id, response=[ResponseMessageModel(message=message)])
 
-    message = response_template.render(
-    success=False,
-    error_message=message_error
-    )
-    return OutputModel(
-        invocationId=invocation_id,
-        response=[ResponseMessageModel(message=message)]
-    )
+        case_id = result["records"][0]["Id"]
+        print(f"Caso encontrado: {case_id}")
+
+        # Actualizar estado del caso
+        client.Case.update(case_id, {"Status": nuevo_estado})
+        print(f"Estado actualizado a '{nuevo_estado}' para el caso {incidente}")
+
+        rendered_response = response_template.render(success=True, incident_number=incidente)
+        return OutputModel(
+            status="success",
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=rendered_response)]
+        )
+
+    except Exception as e:
+        message_error = f"Error al actualizar estado: {e}"
+        print(message_error)
+        message = response_template.render(success=False, error_message=message_error)
+        return OutputModel(invocationId=invocation_id, response=[ResponseMessageModel(message=message)])
 
 @app.get("/salesforce/case/list")
 async def list_incidents(request: Request) -> OutputModel:
     """
-    List incidents from SalesForce.
-
-    Args:
-        params: The parameters for listing incidents.
-
-    Returns:
-        A list of incidents.
+    Listar casos desde Salesforce filtrados por estado.
     """
     data = await request.json()
-
-    # Variable con el status de incidente a buscar
     status = data.get("status")
 
-    # Construimos la query filtrando directamente por el status de incidente
-    soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE Status = '{status}'"
-    
-    query_url = f"{instance_url}/services/data/v57.0/query"
-    params = {"q": soql}
-    
-    headers = {
-        "Authorization": f"Bearer {access_token}",
-        "Content-Type": "application/json"
-    }
-    
+    invocation_id = str(uuid4())
+    response_template = template_env.get_template("response_template_incidents.jinja")
+
     try:
-        response = requests.get(query_url, headers=headers, params=params)
-        response.raise_for_status()
-        
-        result_json = response.json()
-        incidents = result_json.get("records", [])
+        # Consulta SOQL
+        soql = f"SELECT Id, CaseNumber, Subject, Status FROM Case WHERE Status = '{status}'"
+        result = client.query(soql)
+        incidents = result.get("records", [])
         count = len(incidents)
-        invocation_id = str(uuid4())
-        response_template = template_env.get_template("response_template_incidents.jinja")
-        rendered_response = response_template.render(count=count, incidents=incidents) if count > 0 else "No se encontraron incidentes"
+
+        rendered_response = (
+            response_template.render(count=count, incidents=incidents)
+            if count > 0
+            else "No se encontraron incidentes"
+        )
 
         return OutputModel(
             invocationId=invocation_id,
             response=[ResponseMessageModel(message=rendered_response)]
         )
-    except requests.RequestException as e:
+
+    except Exception as e:
         logger.error(f"Error al obtener incidentes: {e}")
         return OutputModel(
             invocationId=invocation_id,
