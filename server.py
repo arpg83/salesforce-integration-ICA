@@ -10,6 +10,7 @@ from fastapi import FastAPI, Request
 from schemas import ResponseMessageModel, OutputModel
 from dotenv import load_dotenv
 from simple_salesforce import Salesforce
+from pathlib import Path
 import re
 
 load_dotenv()
@@ -198,6 +199,81 @@ async def list_incidents(request: Request) -> OutputModel:
             invocationId=invocation_id,
             response=[ResponseMessageModel(message=f"Error al obtener incidentes para el estado: {status}")]
         )
+
+@app.post("/salesforce/case/modal_attached_files")
+async def modal_attached_files(request: Request) -> OutputModel:
+
+    try:
+        data = await request.json()
+
+        # Variable con el status de incidente a buscar
+        ruta = data.get("path_files")
+
+        server_url = os.getenv("SERVER_FILES")
+        archivos = os.listdir(ruta)
+        print(f"< Contenido de: {ruta}")
+        print(f"< Server files: {server_url}\n")
+        
+        files_to_upload = []
+        for elemento in archivos:
+            print("Archivo :", elemento)
+            filepath = os.path.join(ruta, elemento)
+            if os.path.isfile(filepath):
+                files_to_upload.append(filepath)
+
+        print(f"Encontrados {len(files_to_upload)} archivos para subir")
+
+        file_array = []
+
+        # Subir cada archivo
+        for file_path in files_to_upload:
+            try:
+                with open(file_path, 'rb') as file:
+                    files = {'file': file}
+                    response = requests.post(
+                        server_url, 
+                        files=files, 
+                        headers=None,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        print(f"✓ {Path(file_path).name} subido correctamente")
+                        file_array.append(f"✓ {Path(file_path).name}")
+                    else:
+                        print(f"✗ Error subiendo {Path(file_path).name}: {response.status_code}")
+                        file_array.append(f"✗ {Path(file_path).name}")
+    
+            except Exception as e:
+                print(f"✗ Error con {Path(file_path).name}: {str(e)}")
+        
+        invocation_id = str(uuid4())
+        message_modal = f"Se procesaron {len(files_to_upload)} archivos."
+        response_template = template_env.get_template("response_template_multiple_attach.jinja")
+        message = response_template.render(
+        success=True,
+        result_message=message_modal,
+        file_array=file_array
+        )
+        return OutputModel(
+            success="success",
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=message)]
+        )
+
+    except Exception as e:
+        print(f"Error al listar archivos: {e}")
+        invocation_id = str(uuid4())
+        response_template = template_env.get_template("response_template_multiple_attach.jinja")
+        message = response_template.render(
+        success=False,
+        result_message="Error al listar archivos en el directorio."
+        )
+        return OutputModel(
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=message)]
+        )
+
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=10000, log_level="info")
