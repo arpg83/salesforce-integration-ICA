@@ -1,0 +1,10 @@
+{% if success %}
+✅ Archivos adjuntados:
+{{result_message}}
+  {% for file in file_array %}
+    {{ file }}
+  {% endfor %}
+{% else %}
+❌ Failed to update incident:
+- Error: {{ result_message }}
+{% endif %}
