@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 from simple_salesforce import Salesforce
 from pathlib import Path
 import re
+import subprocess
+import sys
 
 load_dotenv()
 
@@ -272,6 +274,35 @@ async def modal_attached_files(request: Request) -> OutputModel:
         return OutputModel(
             invocationId=invocation_id,
             response=[ResponseMessageModel(message=message)]
+        )
+
+
+@app.get("/salesforce/case/web_browser")
+async def open_browser(request: Request) -> OutputModel:
+    """
+    Abre un browser para poder subir archivos.
+    """
+    invocation_id = str(uuid4())
+
+    ruta_chrome = None
+    if sys.platform == "win32":
+        ruta_chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+    elif sys.platform == "darwin": # macOS
+        ruta_chrome = r"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+    else: # Linux
+        ruta_chrome = r"/usr/bin/google-chrome"
+
+    print("Browser del Sistema Operativo : " + ruta_chrome)
+    url = os.getenv("SERVER_WEB")
+
+    if ruta_chrome is not None:
+        subprocess.Popen([ruta_chrome, "--new-tab", url])
+    else:
+        subprocess.Popen(['start', url], shell=True)
+    
+    return OutputModel(
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=f"Se inicia proceso de carga masiva. Al finalizar verifique los archivos adjuntos.")]
         )
 
 
