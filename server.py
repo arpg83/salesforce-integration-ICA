@@ -296,7 +296,8 @@ async def open_browser(request: Request) -> OutputModel:
     url = os.getenv("SERVER_WEB")
 
     if ruta_chrome is not None:
-        subprocess.Popen([ruta_chrome, "--new-tab", url])
+        #subprocess.Popen([ruta_chrome, "--new-tab", url])
+         subprocess.Popen(['start', url], shell=True)
     else:
         subprocess.Popen(['start', url], shell=True)
     
