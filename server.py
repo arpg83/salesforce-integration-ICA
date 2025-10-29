@@ -289,20 +289,27 @@ async def open_browser(request: Request) -> OutputModel:
         ruta_chrome = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     elif sys.platform == "darwin": # macOS
         ruta_chrome = r"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-    else: # Linux
-        ruta_chrome = r"/usr/bin/google-chrome"
+    else: # Linux o Render
+        ruta_chrome = r"/usr/bin/chromium"
 
     print("Browser del Sistema Operativo : " + ruta_chrome)
     url = os.getenv("SERVER_WEB")
 
-    if ruta_chrome is not None:
-        subprocess.Popen([ruta_chrome, "--new-tab", url])
-    else:
-        subprocess.Popen(['start', url], shell=True)
-    
-    return OutputModel(
+    try:
+        if ruta_chrome is not None:
+            subprocess.Popen([ruta_chrome, "--new-tab", url])
+        else:
+            subprocess.Popen(['start', url], shell=True)
+
+        return OutputModel(
             invocationId=invocation_id,
             response=[ResponseMessageModel(message=f"Se inicia proceso de carga masiva. Al finalizar verifique los archivos adjuntos.")]
+        )
+    except Exception as e:
+        print(f"Error al cargar archivos: {e}")
+        return OutputModel(
+            invocationId=invocation_id,
+            response=[ResponseMessageModel(message=f"Se inicia proceso de carga masiva. Al finalizar verifique los archivos adjuntos.\nSi no se despliega pantalla para cargar archivos presione el siguiente link : {url}")]
         )
 
 
